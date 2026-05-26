@@ -1,7 +1,9 @@
 # xhs-review.skill
 新媒体行业小红书投放数据复盘
 自动根据 Excel 投放数据生成带图表的 Word 复盘报告，支持小红书蒲公英标准格式和多平台达人合作表（视频号/抖音/小红书）。
-
+使用方式：
+1. 直接把github链接告诉你的agent（claude code/codex/openclaw/trae）
+2. 下载文件放入你的agent的skill文件夹中
 🎯 功能亮点
 自动识别列名（曝光、互动、成本、粉丝量、SPU 名称等 180+ 字段）
 
