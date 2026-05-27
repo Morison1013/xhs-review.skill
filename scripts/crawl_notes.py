@@ -5,7 +5,7 @@ crawl_notes.py — 多平台笔记爬虫调度器
 URL 自动识别平台并分发到对应爬虫模块：
   - crawl_xiaohongshu.py  → 小红书（需 visible Chrome + 登录态）
   - crawl_bilibili.py     → B站（headless 可用，API 获取评论）
-  - crawl_douyin.py       → 抖音（预留，待测试）
+  - crawl_douyin.py       → 抖音（v2.4 API 方案，需 cookie）
 
 用法：
   # 混合平台 URL 文件
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     )
     parser.add_argument('url_file', help='URL 列表文件（每行一个 URL）')
     parser.add_argument('--cookie', required=False, default=None,
-                        help='Cookie 字符串（小红书需要登录态，B站/抖音可选）')
+                        help='Cookie 字符串（小红书/抖音需要登录态，B站可选）')
     parser.add_argument('--output', default='./crawl_output', help='输出目录')
     parser.add_argument('--max-comments', type=int, default=200,
                         help='每篇笔记最大评论数（默认 200）')

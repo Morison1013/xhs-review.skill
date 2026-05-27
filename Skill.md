@@ -9,7 +9,7 @@ description: 小红书/多平台投放数据复盘 — 输入Excel数据文件�
 
 根据投放数据Excel文件**或**笔记URL列表，自动完成数据分析、图表生成和Word报告组装，产出可直接汇报的复盘文档。
 
-**v2.3**：爬虫模块重构为独立架构，小红书/B站/抖音各自独立模块，支持混合平台URL自动分发。
+**v2.4**：抖音爬虫升级为 API 方案（浏览器 fetch 调用内部 API），替代 DOM 滚动方案。支持完整评论分页拉取和结构化数据导出。
 
 ## 用法
 
@@ -18,7 +18,7 @@ description: 小红书/多平台投放数据复盘 — 输入Excel数据文件�
 python ~/.claude/skills/xhs-review/scripts/run_pipeline.py <Excel数据文件> <品牌名称> [输出目录]
 ```
 
-### 模式2：爬虫模式（v2.3，模块化架构）
+### 模式2：爬虫模式（v2.4，模块化架构）
 ```bash
 python ~/.claude/skills/xhs-review/scripts/run_pipeline.py crawl <URL文件> \
   [--cookie "cookie字符串"] \
@@ -52,8 +52,8 @@ python scripts/crawl_xiaohongshu.py xhs_urls.txt --output ./xhs_output --headed
 # B站（headless 可用）
 python scripts/crawl_bilibili.py bili_urls.txt --output ./bili_output --cookie "SESSDATA=xxx; bili_jct=yyy"
 
-# 抖音（预留框架，待测试）
-python scripts/crawl_douyin.py douyin_urls.txt --output ./dy_output
+# 抖音（v2.4 API 方案）
+python scripts/crawl_douyin.py douyin_urls.txt --output ./dy_output --cookie "ttwid=xxx; sessionid=yyy" --headed
 
 # 混合模式（自动分发到各平台模块）
 python scripts/crawl_notes.py urls.txt --output ./output --headed
@@ -65,7 +65,7 @@ python scripts/crawl_notes.py urls.txt --output ./output --headed
 |------|---------------|---------|
 | 小红书 | **是** | 登录后 F12 → Cookies → `.xiaohongshu.com` → `a1`/`webId`/`web_session` |
 | B站 | 否（可选） | 大部分内容不登录也可爬取，爬评论需要登录（SESSDATA + bili_jct） |
-| 抖音 | 否（可选） | 部分页面需要登录，如遇登录拦截需提供 Cookie |
+| 抖音 | **是**（爬评论必须） | 视频页 F12 → Console → 输入 `document.cookie` → 复制全部输出（核心字段：`ttwid` + `sessionid`） |
 
 **XHS 重要**：`web_session` 是跟随每个笔记链接动态变化的，建议使用 `--xhs-user-data-dir` 参数传入 Chrome 用户数据目录，让浏览器自动管理登录态。
 
@@ -108,7 +108,7 @@ python ~/.claude/skills/xhs-review/scripts/build_report.py ./output/analysis_res
 
 - **数据文件**：.xlsx格式，支持蒲公英标准导出或多sheet达人合作表
 - **URL文件**：每行一个笔记 URL，支持小红书/B站/抖音混合
-- **Cookie**：小红书登录态 Cookie 字符串（或 --xhs-user-data-dir 指定 Chrome profile）
+- **Cookie**：小红书登录态 Cookie 字符串（或 --xhs-user-data-dir 指定 Chrome profile）；抖音需 `ttwid` + `sessionid`
 - **品牌名称**：用于报告标题和命名
 - **输出目录**：可选，默认与数据文件同目录
 
@@ -172,8 +172,8 @@ Word报告包含（Excel 模式）：
 scripts/
 ├── crawl_notes.py         # 调度器：识别平台 URL，分发到对应模块
 ├── crawl_xiaohongshu.py   # 小红书爬虫（独立模块）
-├── crawl_bilibili.py      # B站爬虫（独立模块）
-├── crawl_douyin.py        # 抖音爬虫（独立模块，待测试）
+── crawl_bilibili.py      # B站爬虫（独立模块）
+├── crawl_douyin.py        # 抖音爬虫（v2.4 API 方案）
 ├── crawler_utils.py       # 共享工具函数
 ├── analyze_comments.py    # 评论舆情分析
 ├── analyze_video.py       # 视频内容分析
@@ -189,7 +189,23 @@ scripts/
 |------|----------|------------|---------|------------|
 | 小红书 | **不可用**（会被风控拦截） | DOM 滚动加载 | 拦截 URL | 必须，web_session 动态变化 |
 | B站 | **可用** | API（`/x/v2/reply`） | DASH 分片 | 可选（获取更多评论） |
-| 抖音 | 待测试 | DOM 滚动 | CDN URL | 可选 |
+| 抖音 | 推荐 visible | API（`/aweme/v1/web/comment/list/`） | CDN URL | **必须**（ttwid + sessionid） |
+
+### 抖音 API 方案（v2.4）
+
+抖音爬虫采用 **浏览器内 API 调用** 方案，核心思路：
+
+1. **登录态初始化**：注入 Cookie 后先访问抖音首页，建立完整会话
+2. **视频详情**：`GET /aweme/v1/web/aweme/detail/?aweme_id=xxx`
+3. **评论列表**：`GET /aweme/v1/web/comment/list/?aweme_id=xxx&cursor=N&count=20`（分页拉取）
+4. **子评论**：`GET /aweme/v1/web/comment/list/reply/?comment_id=xxx`
+
+**优势**：浏览器内 `fetch()` 调用自动处理 `a_bogus` 签名，无需本地计算加密参数。结构化 JSON 返回，数据完整度高。
+
+**注意事项**：
+- 抖音 Cookie 有效期较短（通常 1-7 天），过期需重新获取
+- 单个视频爬取风险低；批量爬取建议间隔 10-20 秒/视频
+- 评论数超过 200 条时自动分页拉取
 
 ### 小红书特殊处理
 - **web_session 动态变化**：每个笔记链接有对应的 web_session，不能用固定 cookie
@@ -233,9 +249,10 @@ playwright install chromium
 - **小红书必须使用 visible Chrome**（headless 会被风控拦截）
 - **推荐**：使用 `--xhs-user-data-dir` 参数传入 Chrome profile 路径，自动加载登录态
 - 小红书 Cookie 有效期通常 1-7 天，过期需重新获取
-- B站/抖音不登录也可爬取大部分内容，但爬评论需要登录
+- 抖音爬评论必须提供 Cookie（`ttwid` + `sessionid`）
+- 抖音视频 URL 有时效性，需在会话有效期内下载
 - 视频分析需要 ANTHROPIC_API_KEY，无 API Key 时跳过视频分析继续执行
 - 评论分析为本地规则+关键词，不依赖外部 API
 - 单篇笔记最多抓取 200 条评论（可通过 --max-comments 调整）
 - 各平台反爬策略可能更新，如遇封禁请降低爬取频率
-- B站视频为 DASH 分片格式，下载可能较慢；抖音视频 URL 有时效性，需在会话有效期内下载
+- B站视频为 DASH 分片格式，下载可能较慢

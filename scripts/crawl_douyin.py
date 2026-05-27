@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-crawl_douyin.py — 抖音笔记爬虫（独立模块）
+crawl_douyin.py — 抖音笔记爬虫（API 方案，基于 MediaCrawler）
 
-TODO: 抖音尚未实际测试，以下为基础框架。
-- 可能需要登录态（Cookie）才能查看完整内容
-- 视频下载需处理时效性 URL
-- 评论加载可能需要 API 或 DOM 滚动
+v2.4: 重构为 API 方案。不再用 DOM 滚动抓取，改为调用抖音内部 API：
+- 视频详情: GET /aweme/v1/web/aweme/detail/
+- 评论列表: GET /aweme/v1/web/comment/list/
+- 子评论: GET /aweme/v1/web/comment/list/reply/
 
 用法（独立）：
     python crawl_douyin.py urls.txt --output ./output [--headed] [--cookie "xxx"]
@@ -17,6 +17,7 @@ import re
 import random
 import logging
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from crawler_utils import (
@@ -30,190 +31,117 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================
+# API 调用（通过浏览器 fetch）
+# ============================================================
+
+async def call_douyin_api(page, uri, params=None):
+    """通过浏览器内 fetch 调用抖音内部 API"""
+    if params:
+        query = '&'.join(f'{k}={v}' for k, v in params.items())
+        url = f'{uri}?{query}'
+    else:
+        url = uri
+    return await page.evaluate(f'''() => {{
+        return new Promise((resolve, reject) => {{
+            fetch('{url}', {{ method: 'GET', credentials: 'include' }})
+                .then(r => r.json())
+                .then(d => resolve(d))
+                .catch(e => reject(e.toString()));
+        }});
+    }}''')
+
+
+async def get_video_detail(page, aweme_id):
+    """获取视频详情"""
+    result = await call_douyin_api(page, '/aweme/v1/web/aweme/detail/', {'aweme_id': aweme_id})
+    return result.get('aweme_detail', {})
+
+
+async def get_all_comments(page, aweme_id, max_comments=200):
+    """分页获取所有评论"""
+    comments = []
+    cursor = 0
+    has_more = 1
+    max_pages = max_comments // 20 + 5
+
+    for _ in range(max_pages):
+        if len(comments) >= max_comments:
+            break
+        res = await call_douyin_api(page, '/aweme/v1/web/comment/list/', {
+            'aweme_id': aweme_id,
+            'cursor': cursor,
+            'count': 20,
+            'item_type': 0,
+        })
+        batch = res.get('comments', [])
+        cursor = res.get('cursor', 0)
+        has_more = res.get('has_more', 0)
+        comments.extend(batch)
+        await asyncio.sleep(1.5)
+        if not has_more or not batch:
+            break
+
+    return comments[:max_comments]
+
+
+# ============================================================
 # 笔记信息提取
 # ============================================================
 
 async def extract_douyin_note_info(page, url, note_dir):
-    """从抖音网页版提取结构化信息"""
+    """从抖音 API 提取结构化信息"""
     try:
         note_id = extract_note_id_from_url(url, 'douyin')
+        logger.info(f'正在爬取(抖音): {url}')
 
-        await page.goto(url, wait_until='domcontentloaded', timeout=30000)
-        await human_delay(3, 6)
-        await simulate_scroll(page, 2)
-        await human_delay(1, 2)
-
-        # 检测登录拦截
-        current_url = page.url
-        if 'login' in current_url.lower():
-            logger.warning(f'  页面需要登录: {url}')
+        # 通过 API 获取视频详情
+        logger.info(f'  获取视频详情...')
+        detail = await get_video_detail(page, note_id)
+        if not detail:
+            logger.warning(f'  视频详情为空: {url}')
             return None
 
-        # 标题 — 从 meta 标签
-        title = ''
-        try:
-            title_el = await page.query_selector('meta[property="og:title"]')
-            if title_el:
-                title = (await title_el.get_attribute('content') or '').strip()
-            if not title:
-                title_el = await page.query_selector('h1, [class*="title"], .title, [class*="desc"]')
-                if title_el:
-                    title = (await title_el.inner_text()).strip()
-            if not title:
-                title = await page.title()
-        except Exception:
-            title = await page.title()
+        # 解析详情
+        author_info = detail.get('author', {})
+        stats = detail.get('statistics', {})
+        video_info = detail.get('video', {})
 
-        # 描述
-        content_text = ''
-        try:
-            desc_el = await page.query_selector('[class*="desc"], .desc, [class*="content"], .content')
-            if desc_el:
-                content_text = (await desc_el.inner_text()).strip()
-        except Exception:
-            pass
-
-        # 互动数据
-        stats = {'likes': 0, 'favorites': 0, 'comments_count': 0, 'shares': 0}
-        try:
-            text = await page.inner_text('body')
-            like_match = re.search(r'(\d+(?:\.\d+)?[w万]?)\s*点赞', text)
-            fav_match = re.search(r'(\d+(?:\.\d+)?[w万]?)\s*收藏', text)
-            comment_match = re.search(r'(\d+(?:\.\d+)?[w万]?)\s*评论', text)
-            share_match = re.search(r'(\d+(?:\.\d+)?[w万]?)\s*分享', text)
-            if like_match:
-                stats['likes'] = parse_num(like_match.group(1))
-            if fav_match:
-                stats['favorites'] = parse_num(fav_match.group(1))
-            if comment_match:
-                stats['comments_count'] = parse_num(comment_match.group(1))
-            if share_match:
-                stats['shares'] = parse_num(share_match.group(1))
-        except Exception:
-            pass
-
-        # 作者
-        author = {'name': '', 'fans_count': 0}
-        try:
-            author_el = await page.query_selector('[class*="author"], .author, [class*="user-name"], .user-name')
-            if author_el:
-                author['name'] = (await author_el.inner_text()).strip()
-        except Exception:
-            pass
-
-        # 封面图
-        image_paths = []
-        try:
-            cover_el = await page.query_selector('meta[property="og:image"]')
-            if cover_el:
-                cover_url = (await cover_el.get_attribute('content') or '').strip()
-                if cover_url:
-                    cover_path = os.path.join(note_dir, 'cover.jpg')
-                    resp = await page.context.request.get(cover_url)
-                    if resp.status == 200:
-                        with open(cover_path, 'wb') as f:
-                            f.write(await resp.body())
-                        image_paths.append(cover_path)
-        except Exception:
-            pass
-
-        # 视频
-        video_info = {'has_video': True, 'video_url': '', 'duration_sec': 0, 'local_path': ''}
-        try:
-            video_el = await page.query_selector('video')
-            if video_el:
-                video_src = await video_el.get_attribute('src') or ''
-                if not video_src:
-                    src_el = await video_el.query_selector('source')
-                    if src_el:
-                        video_src = await src_el.get_attribute('src') or ''
-                if video_src:
-                    video_info['video_url'] = video_src
-                    try:
-                        duration = await video_el.evaluate('el => el.duration')
-                        video_info['duration_sec'] = int(duration) if duration else 0
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        return {
+        note_data = {
             'note_id': note_id,
             'note_url': url,
-            'title': title,
-            'content_text': content_text,
+            'title': detail.get('desc', ''),
+            'content_text': detail.get('desc', ''),
             'note_type': 'video',
-            'images': image_paths,
-            'video': video_info,
-            'author': author,
-            'stats': stats,
+            'images': [],
+            'video': {
+                'has_video': True,
+                'video_url': '',
+                'duration_sec': round(video_info.get('duration', 0) / 1000),
+                'local_path': '',
+            },
+            'author': {
+                'name': author_info.get('nickname', ''),
+                'fans_count': author_info.get('follower_count', 0),
+            },
+            'stats': {
+                'plays': stats.get('play_count', 0),
+                'likes': stats.get('digg_count', 0),
+                'comments_count': stats.get('comment_count', 0),
+                'favorites': stats.get('collect_count', 0),
+                'shares': stats.get('share_count', 0),
+            },
             'comments': [],
         }
+
+        logger.info(f'  标题: {note_data["title"][:50]}')
+        logger.info(f'  作者: {note_data["author"]["name"]}')
+        logger.info(f'  数据: 播放={note_data["stats"]["plays"]}, 点赞={note_data["stats"]["likes"]}, '
+                    f'评论={note_data["stats"]["comments_count"]}, 收藏={note_data["stats"]["favorites"]}')
+
+        return note_data
     except Exception as e:
         logger.error(f'  抖音 页面提取失败: {e}')
         return None
-
-
-# ============================================================
-# 评论加载
-# ============================================================
-
-async def load_douyin_comments(page, max_comments=200):
-    """加载抖音评论（滚动触发）"""
-    comments = []
-    seen_texts = set()
-
-    try:
-        await human_delay(2, 4)
-        await simulate_scroll(page, 5)
-        await human_delay(2, 3)
-
-        # 尝试点击"查看更多评论"
-        expand_selectors = ['text=查看更多', 'text=展开', '[class*="expand"]', '[class*="load-more"]']
-        for sel in expand_selectors:
-            try:
-                btn = await page.query_selector(sel)
-                if btn:
-                    await btn.click()
-                    await human_delay(1, 2)
-            except Exception:
-                pass
-
-        # 多次滚动加载
-        for _ in range(max_comments // 20 + 3):
-            await page.mouse.wheel(0, 400)
-            await human_delay(1.5, 3.0)
-
-            comment_els = await page.query_selector_all(
-                '[class*="comment"], .comment, [class*="reply"], [data-e2e="comment-item"]'
-            )
-
-            new_count = 0
-            for el in comment_els:
-                try:
-                    text = (await el.inner_text()).strip()
-                    short_text = text[:50]
-                    if not text or short_text in seen_texts or len(text) < 2:
-                        continue
-                    seen_texts.add(short_text)
-
-                    comments.append({
-                        'text': text, 'likes': 0,
-                        'timestamp': '', 'author': '', 'replies': [],
-                    })
-                    new_count += 1
-                    if len(comments) >= max_comments:
-                        break
-                except Exception:
-                    continue
-
-            if new_count == 0 or len(comments) >= max_comments:
-                break
-
-    except Exception as e:
-        logger.warning(f'  抖音 评论加载异常: {e}')
-
-    return comments[:max_comments]
 
 
 # ============================================================
@@ -224,14 +152,23 @@ async def crawl_douyin_note(page, url, note_dir, cookie_str='', max_comments=200
     """爬取单个抖音笔记"""
     logger.info(f'正在爬取(抖音): {url}')
 
+    # 注入 Cookie 并初始化
     if cookie_str:
         try:
             cookies = parse_cookie_string(cookie_str, domain='.douyin.com')
             await page.context.add_cookies(cookies)
+            logger.info(f'  Cookie 已注入，访问主页初始化...')
+            await page.goto('https://www.douyin.com', wait_until='domcontentloaded', timeout=15000)
+            await human_delay(2, 4)
+            title = await page.title()
+            logger.info(f'  抖音首页: {title}')
         except Exception as e:
             logger.warning(f'  Cookie 注入失败: {e}')
 
+    # 视频拦截（用于下载）
     video_urls = await intercept_video_url(page, 'douyin')
+
+    # API 提取信息
     note_data = await extract_douyin_note_info(page, url, note_dir)
     if note_data is None:
         return None
@@ -245,9 +182,9 @@ async def crawl_douyin_note(page, url, note_dir, cookie_str='', max_comments=200
             note_data['video']['local_path'] = video_path
             logger.info(f'  抖音视频下载成功: {video_path}')
         else:
-            # 尝试拦截的 URL
             for vurl in video_urls:
                 if '.mp4' in vurl or 'douyinvod' in vurl:
+                    video_path = os.path.join(note_dir, 'video.mp4')
                     ok = await download_resource(page.context, vurl, video_path, timeout=60000)
                     if ok:
                         note_data['video']['local_path'] = video_path
@@ -269,10 +206,21 @@ async def crawl_douyin_note(page, url, note_dir, cookie_str='', max_comments=200
         logger.warning(f'  抖音视频下载失败，跳过视频分析')
         note_data['video']['has_video'] = False
 
-    # 加载评论
+    # API 获取评论
     if note_data['stats'].get('comments_count', 0) > 0:
         logger.info(f'  正在加载抖音评论...')
-        note_data['comments'] = await load_douyin_comments(page, max_comments)
+        raw_comments = await get_all_comments(page, note_data['note_id'], max_comments)
+        note_data['comments'] = []
+        for c in raw_comments:
+            user = c.get('user', {})
+            note_data['comments'].append({
+                'text': c.get('text', ''),
+                'likes': c.get('digg_count', 0),
+                'timestamp': c.get('create_time', 0),
+                'author': user.get('nickname', ''),
+                'replies': [],
+                'ip': c.get('ip_label', ''),
+            })
         logger.info(f'  实际获取 {len(note_data["comments"])} 条评论')
 
     # 封面
@@ -305,7 +253,7 @@ async def crawl_douyin_notes(urls, output_dir, max_comments=200, headless=True,
 
     result = {
         'crawl_metadata': {
-            'crawl_time': __import__('time').strftime('%Y-%m-%dT%H:%M:%S'),
+            'crawl_time': time.strftime('%Y-%m-%dT%H:%M:%S'),
             'total_urls': len(urls),
             'successful': 0,
             'failed': 0,
@@ -320,7 +268,7 @@ async def crawl_douyin_notes(urls, output_dir, max_comments=200, headless=True,
         browser = await p.chromium.launch(headless=headless)
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
             locale='zh-CN',
         )
         page = await context.new_page()
@@ -370,7 +318,7 @@ async def crawl_douyin_notes(urls, output_dir, max_comments=200, headless=True,
 if __name__ == '__main__':
     import argparse
 
-    parser = argparse.ArgumentParser(description='抖音笔记爬虫')
+    parser = argparse.ArgumentParser(description='抖音笔记爬虫 (API 方案)')
     parser.add_argument('url_file', help='URL 列表文件')
     parser.add_argument('--output', default='./crawl_output', help='输出目录')
     parser.add_argument('--max-comments', type=int, default=200, help='每篇最大评论数')
