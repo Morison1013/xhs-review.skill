@@ -9,7 +9,7 @@ description: 小红书/多平台投放数据复盘 — 输入Excel数据文件�
 
 根据投放数据Excel文件**或**笔记URL列表，自动完成数据分析、图表生成和Word报告组装，产出可直接汇报的复盘文档。
 
-**新增（v2.1）**：支持通过 Playwright 爬取小红书笔记页面，自动分析评论区舆情和视频内容。
+**新增（v2.2）**：支持小红书、B站、抖音三大平台的自动爬取，自动分析评论区舆情和视频内容。URL 文件可混合不同平台的链接，自动识别并分发。
 
 ## 用法
 
@@ -18,10 +18,10 @@ description: 小红书/多平台投放数据复盘 — 输入Excel数据文件�
 python ~/.claude/skills/xhs-review/scripts/run_pipeline.py <Excel数据文件> <品牌名称> [输出目录]
 ```
 
-### 模式2：爬虫模式（新增）
+### 模式2：爬虫模式（v2.1+，支持小红书/B站/抖音）
 ```bash
 python ~/.claude/skills/xhs-review/scripts/run_pipeline.py crawl <URL文件> \
-  --cookie "a1=xxx; webId=yyy; web_session=zzz" \
+  [--cookie "cookie字符串"] \
   --brand 品牌名 \
   [--output 输出目录] \
   [--llm-config config/llm_config.json] \
@@ -30,17 +30,23 @@ python ~/.claude/skills/xhs-review/scripts/run_pipeline.py crawl <URL文件> \
   [--headed]
 ```
 
-URL 文件格式：每行一个笔记 URL，空行和 `#` 开头的注释行自动跳过。
+URL 文件格式：每行一个笔记 URL，空行和 `#` 开头的注释行自动跳过。支持混合平台：
 ```
-# 竞品笔记
+# 小红书
 https://www.xiaohongshu.com/explore/64a1b2c3d4e5f6
-https://www.xiaohongshu.com/explore/64b2c3d4e5f6a7
+# B站
+https://www.bilibili.com/video/BV1xx4y1c7mN
+# 抖音
+https://www.douyin.com/video/7123456789012345678
 ```
 
 ### Cookie 获取方式
-1. 浏览器打开小红书网页版 → 登录
-2. F12 → Application → Cookies → `.xiaohongshu.com`
-3. 复制 `a1`、`webId`、`web_session` 等 key 的值，用 `; ` 拼接
+
+| 平台 | Cookie 是否必须 | 获取方式 |
+|------|---------------|---------|
+| 小红书 | **是** | 登录后 F12 → Cookies → `.xiaohongshu.com` → `a1`/`webId`/`web_session` |
+| B站 | 否（可选） | 大部分内容不登录也可爬取，爬评论需要登录 |
+| 抖音 | 否（可选） | 部分页面需要登录，如遇登录拦截需提供 Cookie |
 
 ### 分步执行
 ```bash
@@ -196,8 +202,10 @@ playwright install chromium
 
 ### 爬虫模式注意事项
 - 爬取频率已内置人体行为模拟（3~8秒随机间隔），不建议修改为更快速度
-- Cookie 有效期通常 1-7 天，过期需重新获取
+- 小红书 Cookie 有效期通常 1-7 天，过期需重新获取
+- B站/抖音不登录也可爬取大部分内容，但爬评论需要登录
 - 视频分析需要 ANTHROPIC_API_KEY，无 API Key 时跳过视频分析继续执行
 - 评论分析为本地规则+关键词，不依赖外部 API
 - 单篇笔记最多抓取 200 条评论（可通过 --max-comments 调整）
-- 小红书反爬策略可能更新，如遇封禁请降低爬取频率
+- 各平台反爬策略可能更新，如遇封禁请降低爬取频率
+- B站视频为 DASH 分片格式，下载可能较慢；抖音视频 URL 有时效性，需在会话有效期内下载

@@ -95,7 +95,7 @@ def run_crawl_pipeline(url_file, cookie, brand, output_dir=None, llm_config=None
     video_path = os.path.join(tmp_dir, 'video_analysis.json')
     json_path = os.path.join(tmp_dir, 'analysis_result.json')
     chart_dir = os.path.join(tmp_dir, 'charts')
-    output_name = f'{brand}小红书内容分析报告.docx'
+    output_name = f'{brand}内容分析报告.docx'
     output_docx = os.path.join(output_dir, output_name)
 
     if llm_config is None:
@@ -104,7 +104,7 @@ def run_crawl_pipeline(url_file, cookie, brand, output_dir=None, llm_config=None
             llm_config = default_config
 
     print('=' * 60)
-    print(f'小红书内容分析 Pipeline (爬虫模式)')
+    print(f'多平台内容分析 Pipeline (爬虫模式)')
     print(f'URL 文件: {url_file}')
     print(f'品牌名称: {brand}')
     print(f'输出目录: {output_dir}')
@@ -112,10 +112,11 @@ def run_crawl_pipeline(url_file, cookie, brand, output_dir=None, llm_config=None
 
     # Step 0: Crawl notes
     print('\n[Step 0/5] 爬取笔记中...')
-    headed_flag = '--headed' if headed else ''
     cmd = [sys.executable, os.path.join(SCRIPT_DIR, 'crawl_notes.py'),
-           url_file, '--cookie', cookie, '--output', tmp_dir,
+           url_file, '--output', tmp_dir,
            '--max-comments', str(max_comments)]
+    if cookie:
+        cmd.extend(['--cookie', cookie])
     if max_notes > 0:
         cmd.extend(['--max-notes', str(max_notes)])
     if headed:
@@ -206,7 +207,7 @@ def main():
     # Crawl mode
     crawl_parser = subparsers.add_parser('crawl', help='爬虫模式：从 URL 列表爬取笔记并分析')
     crawl_parser.add_argument('url_file', help='URL 列表文件（每行一个 URL）')
-    crawl_parser.add_argument('--cookie', required=True, help='Cookie 字符串')
+    crawl_parser.add_argument('--cookie', default=None, help='Cookie 字符串（小红书需要登录，B站/抖音可选）')
     crawl_parser.add_argument('--brand', required=True, help='品牌名称')
     crawl_parser.add_argument('--output', default=None, help='输出目录')
     crawl_parser.add_argument('--llm-config', default=None, help='LLM 配置文件路径')
@@ -216,7 +217,7 @@ def main():
 
     # Also support --crawl as a flag for backward compatibility
     parser.add_argument('--crawl', nargs='?', const=True, help='URL 文件路径（爬虫模式）')
-    parser.add_argument('--cookie', default=None, help='Cookie 字符串（爬虫模式）')
+    parser.add_argument('--cookie', default=None, help='Cookie 字符串（小红书需要登录，B站/抖音可选）')
     parser.add_argument('--brand', default=None, help='品牌名称')
     parser.add_argument('--output', default=None, help='输出目录')
     parser.add_argument('--llm-config', default=None, help='LLM 配置文件')
@@ -231,14 +232,10 @@ def main():
         url_file = args.url_file if args.mode == 'crawl' else (args.crawl if isinstance(args.crawl, str) else None)
         if not url_file:
             parser.error('爬虫模式需要提供 URL 文件路径')
-        if not args.cookie:
-            parser.error('爬虫模式需要提供 --cookie')
-        if not args.brand:
-            parser.error('爬虫模式需要提供 --brand')
 
         run_crawl_pipeline(
             url_file=url_file,
-            cookie=args.cookie,
+            cookie=args.cookie or '',
             brand=args.brand,
             output_dir=args.output,
             llm_config=args.llm_config,

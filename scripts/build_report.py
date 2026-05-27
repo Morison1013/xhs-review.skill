@@ -195,6 +195,9 @@ def build_report(json_path, chart_dir, output_path, brand_name=''):
     # Add crawl-mode sections if data exists
     has_comment = 'comment_analysis' in data
     has_video = 'video_analysis' in data
+    has_crawl_data = 'crawled_data_summary' in data
+    if has_crawl_data:
+        toc.insert(1, '  平台分布')
     if has_comment:
         toc.extend(['八、评论舆情分析', '  8.1 情感分布', '  8.2 评论子类别', '  8.3 热门关键词'])
     if has_video:
@@ -206,6 +209,17 @@ def build_report(json_path, chart_dir, output_path, brand_name=''):
 
     # ========== SEC 1 ==========
     add_heading_styled(doc, '一、数据概览', level=1)
+
+    # Platform distribution (crawl mode)
+    platform_info = data.get('crawled_data_summary', {}).get('platforms', {})
+    if platform_info:
+        platform_rows = []
+        platform_names = {'xiaohongshu': '小红书', 'bilibili': 'B站', 'douyin': '抖音'}
+        for p, count in platform_info.items():
+            platform_rows.append([platform_names.get(p, p), count])
+        add_styled_table(doc, ['平台', '笔记数'], platform_rows, col_widths=[4, 10])
+        doc.add_paragraph()
+
     add_styled_table(doc, ['指标', '数值'], [
         ['品牌', brand],
         ['总笔记数', f'{int(meta["total_notes"]):,}篇（图文{int(meta["image_count"]):,}篇 / 视频{int(meta["video_count"]):,}篇）'],

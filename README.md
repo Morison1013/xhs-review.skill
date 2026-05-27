@@ -30,26 +30,36 @@ python scripts/generate_charts.py <分析JSON> <图表目录>
 python scripts/build_report.py <分析JSON> <图表目录> <输出docx> [品牌名]
 ```
 
-### 模式2：爬虫模式（v2.1 新增）
+### 模式2：爬虫模式（v2.2 新增，支持小红书/B站/抖音）
 
-从笔记 URL 列表自动爬取内容，分析评论区舆情和视频内容。
+从笔记 URL 列表自动爬取内容，分析评论区舆情和视频内容。支持混合平台 URL。
 
 ```bash
 python scripts/run_pipeline.py crawl <URL文件> \
-  --cookie "a1=xxx; webId=yyy; web_session=zzz" \
+  [--cookie "cookie字符串"] \
   --brand 品牌名 \
   [--llm-config config/llm_config.json] \
   [--max-comments 200] \
   [--headed]
 ```
 
-URL 文件格式：每行一个小红书笔记 URL，`#` 开头为注释。
+URL 文件格式：每行一个 URL，`#` 开头为注释。支持混合平台：
+```
+# 小红书
+https://www.xiaohongshu.com/explore/64a1b2c3d4e5f6
+# B站
+https://www.bilibili.com/video/BV1xx4y1c7mN
+# 抖音
+https://www.douyin.com/video/7123456789012345678
+```
 
 ### Cookie 获取
 
-1. 浏览器打开小红书网页版并登录
-2. F12 → Application → Cookies → `.xiaohongshu.com`
-3. 复制 `a1`、`webId`、`web_session` 的值，用 `; ` 拼接
+| 平台 | Cookie 是否必须 | 说明 |
+|------|---------------|------|
+| 小红书 | **是** | F12 → Cookies → `.xiaohongshu.com` → `a1`/`webId`/`web_session` |
+| B站 | 否（可选） | 大部分内容不登录也可爬取 |
+| 抖音 | 否（可选） | 部分页面需要登录 |
 
 ## 新增特性（v2.1）
 
