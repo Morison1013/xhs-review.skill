@@ -192,6 +192,13 @@ def build_report(json_path, chart_dir, output_path, brand_name=''):
            '  3.2 SPU维度表现', '  3.3 合作项目成本TOP', '  3.4 粉丝梯队效率',
            '  3.5 健康vs异常笔记', '四、转化漏斗分析', '五、组件效果分析',
            '六、TOP笔记盘点', '七、复盘总结&行动建议']
+    # Add crawl-mode sections if data exists
+    has_comment = 'comment_analysis' in data
+    has_video = 'video_analysis' in data
+    if has_comment:
+        toc.extend(['八、评论舆情分析', '  8.1 情感分布', '  8.2 评论子类别', '  8.3 热门关键词'])
+    if has_video:
+        toc.extend(['九、视频内容深度分析'])
     for item in toc:
         p = doc.add_paragraph(item)
         for run in p.runs: run.font.size = Pt(11); run.font.name = '微软雅黑'; run._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
@@ -486,6 +493,125 @@ def build_report(json_path, chart_dir, output_path, brand_name=''):
         run2 = p.add_run(desc)
         run2.font.size = Pt(10); run2.font.name = '微软雅黑'; run2._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
     doc.add_paragraph()
+
+    # ========== SEC 8: Comment Analysis ==========
+    if 'comment_analysis' in data:
+        ca = data['comment_analysis']
+        add_heading_styled(doc, '八、评论舆情分析', level=1)
+
+        # 8.1 Sentiment
+        add_heading_styled(doc, '8.1 情感分布', level=2)
+        chart10 = os.path.join(chart_dir, '10_sentiment_pie.png')
+        if os.path.exists(chart10):
+            add_centered_image(doc, chart10, 5.5, '图10：评论情感分布')
+        doc.add_paragraph()
+
+        if 'sentiment_distribution' in ca:
+            sd = ca['sentiment_distribution']
+            add_styled_table(doc, ['情感', '评论数', '占比'], [
+                ['正面', sd.get('positive', {}).get('count', 0), f'{sd.get("positive", {}).get("pct", 0):.1f}%'],
+                ['中性', sd.get('neutral', {}).get('count', 0), f'{sd.get("neutral", {}).get("pct", 0):.1f}%'],
+                ['负面', sd.get('negative', {}).get('count', 0), f'{sd.get("negative", {}).get("pct", 0):.1f}%'],
+            ], col_widths=[3, 4, 4])
+        doc.add_paragraph()
+
+        # Representative comments
+        rep = ca.get('representative_comments', {})
+        if rep.get('positive'):
+            add_heading_styled(doc, '代表性正面评论', level=3)
+            for rc in rep['positive'][:3]:
+                p = doc.add_paragraph()
+                run = p.add_run(f'「{rc["text"]}」')
+                run.font.size = Pt(9); run.font.name = '微软雅黑'; run._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
+                run2 = p.add_run(f'  👍 {rc.get("likes", 0)}')
+                run2.font.size = Pt(8); run2.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+        if rep.get('negative'):
+            add_heading_styled(doc, '代表性负面评论', level=3)
+            for rc in rep['negative'][:3]:
+                p = doc.add_paragraph()
+                run = p.add_run(f'「{rc["text"]}」')
+                run.font.size = Pt(9); run.font.name = '微软雅黑'; run._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
+                run.font.color.rgb = RGBColor(0xC0, 0x39, 0x2B)
+        if rep.get('questions'):
+            add_heading_styled(doc, '用户高频问题', level=3)
+            for rc in rep['questions'][:3]:
+                p = doc.add_paragraph()
+                run = p.add_run(f'❓ {rc["text"]}')
+                run.font.size = Pt(9); run.font.name = '微软雅黑'; run._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
+        doc.add_paragraph()
+
+        # 8.2 Sub-categories
+        add_heading_styled(doc, '8.2 评论子类别', level=2)
+        chart11 = os.path.join(chart_dir, '11_comment_categories_bar.png')
+        if os.path.exists(chart11):
+            add_centered_image(doc, chart11, 6.5, '图11：评论子类别分布')
+        doc.add_paragraph()
+
+        if 'sub_categories' in ca:
+            cat_rows = []
+            for cat_name, cat_data in sorted(ca['sub_categories'].items(), key=lambda x: x[1]['count'], reverse=True):
+                cat_rows.append([cat_name, cat_data['count'], f'{cat_data["pct"]:.1f}%'])
+            add_styled_table(doc, ['子类别', '评论数', '占比'], cat_rows, col_widths=[4, 3, 3])
+        doc.add_paragraph()
+
+        # Key insight
+        if ca.get('sub_categories'):
+            top_cat = max(ca['sub_categories'].items(), key=lambda x: x[1]['count'])
+            add_insight(doc, f'用户最关注"{top_cat[0]}"（{top_cat[1]["count"]}条，{top_cat[1]["pct"]:.1f}%），这是内容切入的关键方向。')
+        doc.add_paragraph()
+
+        # 8.3 Keywords
+        add_heading_styled(doc, '8.3 热门关键词', level=2)
+        if 'keywords' in ca:
+            kws = ca['keywords']
+            if kws.get('tfidf_top'):
+                kw_rows = []
+                for kw in kws['tfidf_top'][:15]:
+                    kw_rows.append([kw['word'], kw['count'], f'{kw["weight"]:.4f}'])
+                add_styled_table(doc, ['关键词', '出现次数', 'TF-IDF权重'], kw_rows, col_widths=[3, 3, 4])
+                doc.add_paragraph()
+            if kws.get('ngram_top'):
+                ng_rows = []
+                for ng in kws['ngram_top'][:10]:
+                    ng_rows.append([ng['phrase'], ng['count']])
+                add_styled_table(doc, ['高频短语', '出现次数'], ng_rows, col_widths=[6, 4])
+        doc.add_paragraph()
+
+    # ========== SEC 9: Video Analysis ==========
+    if 'video_analysis' in data:
+        va = data['video_analysis']
+        add_heading_styled(doc, '九、视频内容深度分析', level=1)
+
+        if va.get('video_notes'):
+            for idx, vn in enumerate(va['video_notes'], 1):
+                add_heading_styled(doc, f'9.{idx} {vn.get("note_title", "视频笔记")}', level=2)
+
+                # Content themes
+                llm = vn.get('llm_analysis', {})
+                if llm:
+                    add_styled_table(doc, ['维度', '分析结果'], [
+                        ['内容主题', ', '.join(llm.get('content_themes', []))],
+                        ['视觉风格', ', '.join(llm.get('visual_style', []))],
+                        ['叙事模式', llm.get('narrative_pattern', '')],
+                        ['切入角度', llm.get('cutting_angle', '')],
+                        ['核心卖点', ', '.join(llm.get('key_selling_points', []))],
+                        ['目标受众', llm.get('target_audience', '')],
+                        ['语气风格', llm.get('tone', '')],
+                        ['开场抓人', llm.get('opening_hook', '')],
+                    ], col_widths=[3, 11])
+                    doc.add_paragraph()
+
+                    if llm.get('cutting_angle'):
+                        add_insight(doc, f'该笔记以"{llm["cutting_angle"]}"为切入点，目标受众为{llm.get("target_audience", "")}。')
+                    doc.add_paragraph()
+
+        # Summary across videos
+        if len(va.get('video_notes', [])) > 1:
+            add_heading_styled(doc, '9.0 视频内容总览', level=2)
+            chart12 = os.path.join(chart_dir, '12_video_themes.png')
+            if os.path.exists(chart12):
+                add_centered_image(doc, chart12, 7.0, '图12：视频内容主题与视觉风格')
+            doc.add_paragraph()
 
     # Footer
     p = doc.add_paragraph(); p.alignment = WD_ALIGN_PARAGRAPH.CENTER

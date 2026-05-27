@@ -1,0 +1,10 @@
+{
+  "provider": "claude",
+  "model": "claude-sonnet-4-20250514",
+  "api_key_env": "ANTHROPIC_API_KEY",
+  "max_tokens": 4096,
+  "temperature": 0.3,
+  "max_frames_per_video": 8,
+  "frame_interval_sec": 3,
+  "frame_max_size": [800, 600]
+}

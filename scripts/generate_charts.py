@@ -10,6 +10,7 @@ import numpy as np
 import json
 import sys
 import os
+from collections import Counter
 
 # Set Chinese font
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'SimSun', 'Arial Unicode MS']
@@ -428,6 +429,125 @@ def generate(json_path, chart_dir):
         plt.tight_layout()
         plt.savefig(os.path.join(chart_dir, '09_component_ctr.png'), dpi=150, bbox_inches='tight')
         plt.close()
+
+    # ========== CHART 10: Sentiment Distribution Pie ==========
+    if 'comment_analysis' in data and data['comment_analysis'].get('sentiment_distribution'):
+        print('Chart 10: Sentiment Distribution...')
+        sd = data['comment_analysis']['sentiment_distribution']
+        fig, ax = plt.subplots(figsize=(7, 6))
+        labels = []
+        sizes = []
+        colors_pie = []
+        for key, label_text, color in [('positive', '正面', GREEN), ('neutral', '中性', LIGHT_BLUE), ('negative', '负面', RED)]:
+            if key in sd:
+                pct = sd[key].get('pct', 0)
+                if pct > 0:
+                    labels.append(f'{label_text} {pct:.1f}%')
+                    sizes.append(pct)
+                    colors_pie.append(color)
+
+        if sizes:
+            wedges, texts, autotexts = ax.pie(sizes, labels=labels, colors=colors_pie,
+                autopct='%1.1f%%', startangle=90,
+                textprops={'fontsize': 12, 'fontweight': 'bold'},
+                pctdistance=0.75, wedgeprops=dict(width=0.55, edgecolor='white', linewidth=2))
+            for t in autotexts:
+                t.set_color('white')
+                t.set_fontsize(13)
+                t.set_fontweight('bold')
+
+            total_c = data['comment_analysis'].get('overall', {}).get('total_comments', 0)
+            ax.text(0, -1.3, f'总评论数: {total_c:,}', fontsize=11, ha='center',
+                color=DARK_BLUE, fontweight='bold')
+            ax.set_title('评论情感分布', fontsize=16, fontweight='bold', pad=20, color=BLUE)
+            plt.tight_layout()
+            plt.savefig(os.path.join(chart_dir, '10_sentiment_pie.png'), dpi=150, bbox_inches='tight')
+            plt.close()
+
+    # ========== CHART 11: Comment Sub-category Bar ==========
+    if 'comment_analysis' in data and data['comment_analysis'].get('sub_categories'):
+        print('Chart 11: Comment Sub-categories...')
+        cats = data['comment_analysis']['sub_categories']
+        sorted_cats = sorted(cats.items(), key=lambda x: x[1]['count'], reverse=True)
+        cat_names = [c[0] for c in sorted_cats]
+        cat_counts = [c[1]['count'] for c in sorted_cats]
+        cat_pcts = [c[1]['pct'] for c in sorted_cats]
+
+        fig, ax = plt.subplots(figsize=(9, max(4, len(cat_names) * 0.5)))
+        y = np.arange(len(cat_names))
+        bars = ax.barh(y, cat_counts, color=DARK_BLUE, edgecolor='white', height=0.6)
+        ax.set_yticks(y)
+        ax.set_yticklabels(cat_names, fontsize=11)
+        ax.set_xlabel('评论数', fontsize=10)
+        ax.set_title('评论子类别分布', fontsize=16, fontweight='bold', pad=15, color=BLUE)
+
+        for bar, count, pct in zip(bars, cat_counts, cat_pcts):
+            ax.text(bar.get_width() + max(cat_counts) * 0.01, bar.get_y() + bar.get_height() / 2,
+                f'{count} ({pct:.1f}%)', va='center', fontsize=9, fontweight='bold', color=DARK_BLUE)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        plt.tight_layout()
+        plt.savefig(os.path.join(chart_dir, '11_comment_categories_bar.png'), dpi=150, bbox_inches='tight')
+        plt.close()
+
+    # ========== CHART 12: Video Content Themes ==========
+    if 'video_analysis' in data and data['video_analysis'].get('video_notes'):
+        print('Chart 12: Video Content Themes...')
+        vn_list = data['video_analysis']['video_notes']
+
+        # Collect all themes across videos
+        all_themes = []
+        all_styles = []
+        theme_counts = Counter()
+        for vn in vn_list:
+            llm = vn.get('llm_analysis', {})
+            for t in llm.get('content_themes', []):
+                theme_counts[t] += 1
+                all_themes.append(t)
+            for s in llm.get('visual_style', []):
+                all_styles.append(s)
+
+        if theme_counts:
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+            # Left: content themes
+            top_themes = theme_counts.most_common(10)
+            t_names = [t[0] for t in top_themes]
+            t_vals = [t[1] for t in top_themes]
+            y = np.arange(len(t_names))
+            ax1.barh(y, t_vals, color=DARK_BLUE, edgecolor='white', height=0.5)
+            ax1.set_yticks(y)
+            ax1.set_yticklabels(t_names, fontsize=10)
+            ax1.set_xlabel('出现次数', fontsize=10)
+            ax1.set_title('视频内容主题', fontsize=14, fontweight='bold', pad=10, color=BLUE)
+            for bar, val in zip(ax1.patches, t_vals):
+                ax1.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height() / 2,
+                    str(val), va='center', fontsize=9, fontweight='bold', color=DARK_BLUE)
+            ax1.spines['top'].set_visible(False)
+            ax1.spines['right'].set_visible(False)
+
+            # Right: visual styles
+            style_counts = Counter(all_styles)
+            top_styles = style_counts.most_common(8)
+            s_names = [s[0] for s in top_styles]
+            s_vals = [s[1] for s in top_styles]
+            y2 = np.arange(len(s_names))
+            ax2.barh(y2, s_vals, color=LIGHT_BLUE, edgecolor='white', height=0.5)
+            ax2.set_yticks(y2)
+            ax2.set_yticklabels(s_names, fontsize=10)
+            ax2.set_xlabel('出现次数', fontsize=10)
+            ax2.set_title('视觉风格', fontsize=14, fontweight='bold', pad=10, color=BLUE)
+            for bar, val in zip(ax2.patches, s_vals):
+                ax2.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height() / 2,
+                    str(val), va='center', fontsize=9, fontweight='bold', color=DARK_BLUE)
+            ax2.spines['top'].set_visible(False)
+            ax2.spines['right'].set_visible(False)
+
+            plt.suptitle(f'视频内容分析 (共 {len(vn_list)} 篇)', fontsize=16, fontweight='bold', color=BLUE)
+            plt.tight_layout()
+            plt.savefig(os.path.join(chart_dir, '12_video_themes.png'), dpi=150, bbox_inches='tight')
+            plt.close()
 
     # Return chart file list
     charts = []

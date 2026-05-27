@@ -492,8 +492,130 @@ def analyze(data_path, output_path):
 
     return result
 
+def merge_crawl_data(crawled_path, output_path, comment_path=None, video_path=None):
+    """
+    仅使用爬虫数据生成 analysis_result.json（无 Excel 时）。
+    如果有 comment_path / video_path 则一并合并。
+    """
+    with open(crawled_path, 'r', encoding='utf-8') as f:
+        crawled = json.load(f)
+
+    notes = crawled.get('notes', [])
+    meta = crawled.get('crawl_metadata', {})
+
+    # 从爬取数据计算基础指标
+    video_count = sum(1 for n in notes if n.get('note_type') == 'video')
+    image_count = sum(1 for n in notes if n.get('note_type') == 'image')
+    total_comments = sum(len(n.get('comments', [])) for n in notes)
+
+    total_likes = sum(n.get('stats', {}).get('likes', 0) for n in notes)
+    total_favorites = sum(n.get('stats', {}).get('favorites', 0) for n in notes)
+    total_shares_val = sum(n.get('stats', {}).get('shares', 0) for n in notes)
+    total_comments_count = sum(n.get('stats', {}).get('comments_count', 0) for n in notes)
+
+    core = {
+        'total_exposure': 0,
+        'total_reads': 0,
+        'avg_reads': 0,
+        'total_interactions': total_likes + total_favorites + total_comments_count + total_shares_val,
+        'total_likes': total_likes,
+        'total_favorites': total_favorites,
+        'total_comments': total_comments_count,
+        'total_shares': total_shares_val,
+        'total_follows': 0,
+        'avg_interact_rate': 0,
+        'cpe': 0,
+        'cpm': 0,
+        'cpc': 0,
+    }
+
+    # Crawled data summary
+    crawl_summary = {
+        'notes_crawled': len(notes),
+        'video_notes': video_count,
+        'image_notes': image_count,
+        'total_comments_scraped': total_comments,
+        'crawl_success_rate': round(meta.get('successful', 0) / max(meta.get('total_urls', 1), 1), 2),
+    }
+
+    result = {
+        'meta': {
+            'total_notes': len(notes),
+            'video_count': video_count,
+            'image_count': image_count,
+            'abnormal_count': 0,
+            'star_count': 0,
+        },
+        'core_metrics': core,
+        'traffic_structure': {
+            'promo_exposure': 0, 'promo_exposure_pct': 0,
+            'promo_reads': 0, 'promo_reads_pct': 0,
+            'nat_exposure': 0, 'nat_exposure_pct': 0,
+            'nat_reads': 0, 'nat_reads_pct': 0,
+            'heat_exposure': 0, 'heat_reads': 0,
+            'total_cost': 0, 'pgy_cost': 0, 'ad_cost': 0,
+        },
+        'traffic_sources': {'exp': {}, 'read': {}},
+        'content_types': {},
+        'spu_top': [],
+        'proj_top': [],
+        'fan_tiers': {},
+        'health': {},
+        'conversion': {},
+        'components': {},
+        'top_reads': [],
+        'top_cost': [],
+        'crawled_data_summary': crawl_summary,
+    }
+
+    # Merge comment analysis
+    if comment_path and os.path.exists(comment_path):
+        with open(comment_path, 'r', encoding='utf-8') as f:
+            result['comment_analysis'] = json.load(f)
+
+    # Merge video analysis
+    if video_path and os.path.exists(video_path):
+        with open(video_path, 'r', encoding='utf-8') as f:
+            result['video_analysis'] = json.load(f)
+
+    # Write
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(result, f, ensure_ascii=False, indent=2, default=str)
+
+    print(f'\n爬虫数据合并完成！')
+    print(f'笔记数: {len(notes)} (视频 {video_count}, 图文 {image_count})')
+    print(f'评论数: {total_comments}')
+    print(f'结果已保存: {output_path}')
+
+    return result
+
+
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        print(f"用法: python analyze_data.py <Excel文件路径> <输出JSON路径>")
+        print(f"用法:")
+        print(f"  python analyze_data.py <Excel文件路径> <输出JSON路径>")
+        print(f"  python analyze_data.py --merge-crawl <crawled_notes.json> <输出JSON路径> [--comments comment.json] [--videos video.json]")
         sys.exit(1)
-    analyze(sys.argv[1], sys.argv[2])
+
+    # Check for --merge-crawl flag
+    if sys.argv[1] == '--merge-crawl':
+        crawled_path = sys.argv[2]
+        output_path = sys.argv[3]
+        comment_path = None
+        video_path = None
+
+        # Parse optional args
+        i = 4
+        while i < len(sys.argv):
+            if sys.argv[i] == '--comments' and i + 1 < len(sys.argv):
+                comment_path = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == '--videos' and i + 1 < len(sys.argv):
+                video_path = sys.argv[i + 1]
+                i += 2
+            else:
+                i += 1
+
+        merge_crawl_data(crawled_path, output_path, comment_path, video_path)
+    else:
+        analyze(sys.argv[1], sys.argv[2])
