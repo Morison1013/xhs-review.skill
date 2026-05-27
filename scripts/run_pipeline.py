@@ -79,7 +79,9 @@ def run_pipeline(data_file, brand, output_dir=None):
     print('=' * 60)
 
 
-def run_crawl_pipeline(url_file, cookie, brand, output_dir=None, llm_config=None, max_comments=200, max_notes=0, headed=False):
+def run_crawl_pipeline(url_file, cookie, brand, output_dir=None, llm_config=None,
+                        max_comments=200, max_notes=0, headed=False,
+                        xhs_user_data_dir=None):
     """Crawl-driven pipeline: crawl → comment analysis → video analysis → merge → report."""
     if output_dir is None:
         output_dir = os.path.dirname(os.path.abspath(url_file))
@@ -121,6 +123,8 @@ def run_crawl_pipeline(url_file, cookie, brand, output_dir=None, llm_config=None
         cmd.extend(['--max-notes', str(max_notes)])
     if headed:
         cmd.append('--headed')
+    if xhs_user_data_dir:
+        cmd.extend(['--xhs-user-data-dir', xhs_user_data_dir])
     ret = subprocess.run(cmd, capture_output=False)
     if ret.returncode != 0 or not os.path.exists(crawled_path):
         print('爬取失败!')
@@ -214,6 +218,7 @@ def main():
     crawl_parser.add_argument('--max-comments', type=int, default=200, help='每篇最大评论数')
     crawl_parser.add_argument('--max-notes', type=int, default=0, help='最大爬取笔记数')
     crawl_parser.add_argument('--headed', action='store_true', help='显示浏览器窗口')
+    crawl_parser.add_argument('--xhs-user-data-dir', default=None, help='Chrome 用户数据目录（XHS 自动登录态）')
 
     # Also support --crawl as a flag for backward compatibility
     parser.add_argument('--crawl', nargs='?', const=True, help='URL 文件路径（爬虫模式）')
@@ -224,6 +229,7 @@ def main():
     parser.add_argument('--max-comments', type=int, default=200, help='每篇最大评论数')
     parser.add_argument('--max-notes', type=int, default=0, help='最大爬取笔记数')
     parser.add_argument('--headed', action='store_true', help='显示浏览器窗口')
+    parser.add_argument('--xhs-user-data-dir', default=None, help='Chrome 用户数据目录（XHS）')
 
     args = parser.parse_args()
 
@@ -242,6 +248,7 @@ def main():
             max_comments=args.max_comments,
             max_notes=args.max_notes,
             headed=args.headed,
+            xhs_user_data_dir=args.xhs_user_data_dir,
         )
     else:
         # Excel mode (fallback to positional args)
