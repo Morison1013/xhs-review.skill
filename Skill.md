@@ -9,13 +9,63 @@ description: 小红书/多平台投放数据复盘 — 输入Excel数据文件�
 
 根据投放数据Excel文件**或**笔记URL列表，自动完成数据分析、图表生成和Word报告组装，产出可直接汇报的复盘文档。
 
+**v3.0**：新增 `column_matcher` 模块 — 自动识别不同Excel文件的列名变体（同义词匹配）+ 平台自适应检测。支持小红书、视频号、抖音、B站多平台自动识别，无需手动指定。
+
 **v2.4**：抖音爬虫升级为 API 方案（浏览器 fetch 调用内部 API），替代 DOM 滚动方案。支持完整评论分页拉取和结构化数据导出。
+
+## 列名自动识别（v3.0 新增）
+
+### 通用同义词字典
+`scripts/column_matcher.py` 内置了 `UNIVERSAL_SYNONYMS`，为每个指标维护一组可能的列名：
+- `col_exposure`: `['曝光量', '曝光', '播放量', '播放', '展现量', '展现', '覆盖人数', '触达人数', '阅读量']`
+- `col_interaction`: `['互动量', '互动数', '互动', '总互动', '转评赞', '转评赞总数', '互动总数', '综合互动', '互动总量', '行为总数']`
+- `col_likes`: `['赞', '点赞量', '点赞数', '点赞', 'like', 'likes', '红心']`
+- `col_cost`: `['SIPAC价格', 'SIPAC报价', '合作费用', '达人报价', '报价', '金额', '总费用', '成本', '合作金额', '投放金额', '单价', '达人费用', '执行费用', '达人合作费', '合作价']`
+- 等 50+ 个指标，每个有 3-15 个同义词
+
+### 平台专属同义词
+`PLATFORM_SYNONYMS` 字典针对不同平台覆盖特殊列名：
+- **xhs**: `曝光量`, `阅读量`, `发现页`, `搜索页`, `蒲公英`, `健康等级` 等
+- **video_number**: `视频号`, `SIPAC`, `切角方向`, `私密赞`, `评论区提及率` 等
+- **douyin**: `播放量`, `DOU+`, `抖加`, `千川` 等
+- **bilibili**: `B站`, `弹幕`, `BV` 等
+
+### 自动平台检测
+`detect_platform(col_names)` 通过列名特征自动识别平台类型（视频号/小红书/抖音/B站），然后使用对应的同义词字典进行列名匹配。
+
+### 使用方式
+```python
+from column_matcher import detect_all_columns, detect_platform, detect_header_row
+
+# 自动检测平台
+platform = detect_platform(list(df.columns))
+
+# 自动检测 header 行
+header_row = detect_header_row(data_path)
+
+# 使用平台适配的同义词匹配
+col_map = detect_all_columns(col_names, platform=platform)
+```
 
 ## 用法
 
 ### 模式1：Excel 数据文件（原有模式）
 ```bash
 python ~/.claude/skills/xhs-review/scripts/run_pipeline.py <Excel数据文件> <品牌名称> [输出目录]
+```
+
+**自动平台检测**：脚本自动读取Excel列名，识别平台类型（小红书/视频号/抖音/B站），无需手动指定。
+
+**视频号专属模式**：当检测到视频号数据时，自动启用 `analyze_video_number.py` pipeline，包含：
+- 曝光/互动/CPM/CPE 核心指标
+- 互动构成分析（赞/评论/分享/私密赞）
+- 达人类型/合作形式/达人量级/切角方向 多维度拆解
+- **预估 vs 实际达成评价**：基于 I-M 列（预估/平均）与 Q-T 列（实际）对比，生成达成率评价表格和可视化图表
+- 时间趋势、完播率与提及率统计、TOP达人盘点
+
+```bash
+# 视频号Excel - 自动识别，无需额外参数
+python scripts/run_pipeline.py 视频号执行表.xlsx 品牌名
 ```
 
 ### 模式2：爬虫模式（v2.4，模块化架构）
@@ -170,16 +220,22 @@ Word报告包含（Excel 模式）：
 ### 独立模块结构
 ```
 scripts/
+├── column_matcher.py      # 列名自动匹配模块（v3.0 新增）
+├── analyze_data.py        # 小红书 Excel 数据分析
+├── analyze_video_number.py# 视频号 Excel 数据分析（v3.0 新增）
+├── generate_charts.py     # 小红书/通用 matplotlib 图表生成
+├── generate_video_number_charts.py  # 视频号专属图表（v3.0 新增）
+├── build_report.py        # 小红书 Word 报告组装
+├── build_video_number_report.py     # 视频号 Word 报告（v3.0 新增）
+├── run_pipeline.py        # Pipeline 编排（自动检测平台并路由）
 ├── crawl_notes.py         # 调度器：识别平台 URL，分发到对应模块
 ├── crawl_xiaohongshu.py   # 小红书爬虫（独立模块）
-── crawl_bilibili.py      # B站爬虫（独立模块）
+├── crawl_bilibili.py      # B站爬虫（独立模块）
 ├── crawl_douyin.py        # 抖音爬虫（v2.4 API 方案）
+├── crawl_douyin_api.py    # 抖音 API 爬虫
 ├── crawler_utils.py       # 共享工具函数
 ├── analyze_comments.py    # 评论舆情分析
-├── analyze_video.py       # 视频内容分析
-├── analyze_data.py        # Excel 数据分析和爬虫数据合并
-├── generate_charts.py     # matplotlib 图表生成
-├── build_report.py        # Word 报告组装
+├── analyze_video.py       # 视频内容分析（LLM）
 └── run_pipeline.py        # Pipeline 编排
 ```
 

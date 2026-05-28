@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-run_pipeline.py — 小红书投放复盘全流程
+run_pipeline.py — 投放复盘全流程（支持小红书/视频号/爬虫模式）
 
 用法:
-  # 现有模式（Excel 数据文件）
+  # 自动检测平台（Excel 数据文件）
   python run_pipeline.py <Excel数据文件> <品牌名称> [输出目录]
 
   # 爬虫模式
-  python run_pipeline.py --crawl <URL文件> --cookie "cookie字符串" --brand 品牌名 [输出目录] [--llm-config config文件]
+  python run_pipeline.py --crawl <URL文件> --cookie "cookie字符串" --brand 品牌名 [输出目录]
 """
 import sys
 import os
@@ -17,10 +17,25 @@ import shutil
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
+sys.path.insert(0, SCRIPT_DIR)
+from column_matcher import detect_platform, detect_header_row
+import pandas as pd
+
+
+def detect_platform_from_file(data_file):
+    """Read Excel column names and detect platform."""
+    if not os.path.exists(data_file):
+        return 'xhs'
+    try:
+        header_row = detect_header_row(data_file)
+        df = pd.read_excel(data_file, header=header_row - 1)
+        return detect_platform(list(df.columns))
+    except Exception:
+        return 'xhs'
 
 
 def run_pipeline(data_file, brand, output_dir=None):
-    """Existing Excel-only pipeline (unchanged)."""
+    """小红书 Excel pipeline."""
     if not os.path.exists(data_file):
         print(f'错误: 文件不存在: {data_file}')
         sys.exit(1)
@@ -66,6 +81,66 @@ def run_pipeline(data_file, brand, output_dir=None):
     # Step 3: Build report
     print('\n[3/3] 组装Word报告中...')
     ret = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'build_report.py'),
+                          json_path, chart_dir, output_path, brand], capture_output=False)
+    if ret.returncode != 0:
+        print('报告生成失败!')
+        sys.exit(1)
+
+    # Cleanup
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    print('\n' + '=' * 60)
+    print(f'完成！报告已保存: {output_path}')
+    print('=' * 60)
+
+
+def run_video_number_pipeline(data_file, brand, output_dir=None):
+    """视频号 Excel pipeline."""
+    if not os.path.exists(data_file):
+        print(f'错误: 文件不存在: {data_file}')
+        sys.exit(1)
+
+    if output_dir is None:
+        output_dir = os.path.dirname(os.path.abspath(data_file))
+
+    data_file = os.path.abspath(data_file)
+    output_dir = os.path.abspath(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    tmp_dir = os.path.join(output_dir, '.xhs_review_tmp')
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    json_path = os.path.join(tmp_dir, 'analysis_result.json')
+    chart_dir = os.path.join(tmp_dir, 'charts')
+    output_name = f'{brand}视频号投放复盘SOP.docx'
+    output_path = os.path.join(output_dir, output_name)
+
+    print('=' * 60)
+    print(f'视频号投放复盘 Pipeline')
+    print(f'数据文件: {data_file}')
+    print(f'品牌名称: {brand}')
+    print(f'输出目录: {output_dir}')
+    print('=' * 60)
+
+    # Step 1: Analyze
+    print('\n[1/3] 视频号数据分析中...')
+    ret = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'analyze_video_number.py'),
+                          data_file, json_path], capture_output=False)
+    if ret.returncode != 0:
+        print('分析失败!')
+        sys.exit(1)
+
+    # Step 2: Generate charts
+    print('\n[2/3] 生成图表中...')
+    ret = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'generate_video_number_charts.py'),
+                          json_path, chart_dir], capture_output=False)
+    if ret.returncode != 0:
+        print('图表生成失败!')
+        sys.exit(1)
+
+    # Step 3: Build report
+    print('\n[3/3] 组装Word报告中...')
+    ret = subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, 'build_video_number_report.py'),
                           json_path, chart_dir, output_path, brand], capture_output=False)
     if ret.returncode != 0:
         print('报告生成失败!')
@@ -202,43 +277,48 @@ def run_crawl_pipeline(url_file, cookie, brand, output_dir=None, llm_config=None
 
 
 def main():
-    parser = argparse.ArgumentParser(description='小红书投放复盘 Pipeline')
-    subparsers = parser.add_subparsers(dest='mode')
-
-    # Excel mode (default, positional args)
-    # We handle this via fallback if no --crawl flag
-
-    # Crawl mode
-    crawl_parser = subparsers.add_parser('crawl', help='爬虫模式：从 URL 列表爬取笔记并分析')
-    crawl_parser.add_argument('url_file', help='URL 列表文件（每行一个 URL）')
-    crawl_parser.add_argument('--cookie', default=None, help='Cookie 字符串（小红书需要登录，B站/抖音可选）')
-    crawl_parser.add_argument('--brand', required=True, help='品牌名称')
-    crawl_parser.add_argument('--output', default=None, help='输出目录')
-    crawl_parser.add_argument('--llm-config', default=None, help='LLM 配置文件路径')
-    crawl_parser.add_argument('--max-comments', type=int, default=200, help='每篇最大评论数')
-    crawl_parser.add_argument('--max-notes', type=int, default=0, help='最大爬取笔记数')
-    crawl_parser.add_argument('--headed', action='store_true', help='显示浏览器窗口')
-    crawl_parser.add_argument('--xhs-user-data-dir', default=None, help='Chrome 用户数据目录（XHS 自动登录态）')
-
-    # Also support --crawl as a flag for backward compatibility
-    parser.add_argument('--crawl', nargs='?', const=True, help='URL 文件路径（爬虫模式）')
-    parser.add_argument('--cookie', default=None, help='Cookie 字符串（小红书需要登录，B站/抖音可选）')
-    parser.add_argument('--brand', default=None, help='品牌名称')
-    parser.add_argument('--output', default=None, help='输出目录')
-    parser.add_argument('--llm-config', default=None, help='LLM 配置文件')
-    parser.add_argument('--max-comments', type=int, default=200, help='每篇最大评论数')
-    parser.add_argument('--max-notes', type=int, default=0, help='最大爬取笔记数')
-    parser.add_argument('--headed', action='store_true', help='显示浏览器窗口')
-    parser.add_argument('--xhs-user-data-dir', default=None, help='Chrome 用户数据目录（XHS）')
-
-    args = parser.parse_args()
-
-    # Determine mode
-    if args.mode == 'crawl' or args.crawl:
-        url_file = args.url_file if args.mode == 'crawl' else (args.crawl if isinstance(args.crawl, str) else None)
+    # Check for crawl mode first
+    if 'crawl' in sys.argv[1:2]:
+        # Crawl mode - use argparse
+        parser = argparse.ArgumentParser(description='投放复盘 Pipeline（爬虫模式）')
+        parser.add_argument('url_file', help='URL 列表文件（每行一个 URL）')
+        parser.add_argument('--cookie', default=None, help='Cookie 字符串')
+        parser.add_argument('--brand', required=True, help='品牌名称')
+        parser.add_argument('--output', default=None, help='输出目录')
+        parser.add_argument('--llm-config', default=None, help='LLM 配置文件路径')
+        parser.add_argument('--max-comments', type=int, default=200, help='每篇最大评论数')
+        parser.add_argument('--max-notes', type=int, default=0, help='最大爬取笔记数')
+        parser.add_argument('--headed', action='store_true', help='显示浏览器窗口')
+        parser.add_argument('--xhs-user-data-dir', default=None, help='Chrome 用户数据目录')
+        args = parser.parse_args()
+        run_crawl_pipeline(
+            url_file=args.url_file,
+            cookie=args.cookie or '',
+            brand=args.brand,
+            output_dir=args.output,
+            llm_config=args.llm_config,
+            max_comments=args.max_comments,
+            max_notes=args.max_notes,
+            headed=args.headed,
+            xhs_user_data_dir=args.xhs_user_data_dir,
+        )
+    elif '--crawl' in sys.argv:
+        # Backward compat: --crawl flag
+        parser = argparse.ArgumentParser()
+        parser.add_argument('--crawl', nargs='?', const=True, help='URL 文件路径')
+        parser.add_argument('--cookie', default=None)
+        parser.add_argument('--brand', default=None)
+        parser.add_argument('--output', default=None)
+        parser.add_argument('--llm-config', default=None)
+        parser.add_argument('--max-comments', type=int, default=200)
+        parser.add_argument('--max-notes', type=int, default=0)
+        parser.add_argument('--headed', action='store_true')
+        parser.add_argument('--xhs-user-data-dir', default=None)
+        args = parser.parse_args()
+        url_file = args.crawl if isinstance(args.crawl, str) else None
         if not url_file:
-            parser.error('爬虫模式需要提供 URL 文件路径')
-
+            print('用法: python run_pipeline.py --crawl <URL文件> --brand 品牌名')
+            sys.exit(1)
         run_crawl_pipeline(
             url_file=url_file,
             cookie=args.cookie or '',
@@ -251,23 +331,30 @@ def main():
             xhs_user_data_dir=args.xhs_user_data_dir,
         )
     else:
-        # Excel mode (fallback to positional args)
+        # Excel mode (auto-detect platform)
         if len(sys.argv) < 3:
-            # Check if it's just --help
             if '--help' in sys.argv or '-h' in sys.argv:
-                parser.print_help()
+                print('用法:')
+                print('  # Excel 模式（自动检测平台）:')
+                print('  python run_pipeline.py <Excel数据文件> <品牌名称> [输出目录]')
+                print('  # 爬虫模式:')
+                print('  python run_pipeline.py crawl <URL文件> --brand 品牌名')
                 sys.exit(0)
             print(f'用法:')
-            print(f'  # Excel 模式:')
             print(f'  python run_pipeline.py <Excel数据文件> <品牌名称> [输出目录]')
-            print(f'  # 爬虫模式:')
-            print(f'  python run_pipeline.py crawl <URL文件> --cookie "xxx" --brand 品牌名 [输出目录]')
             sys.exit(1)
 
         data_file = sys.argv[1]
         brand = sys.argv[2]
         output_dir = sys.argv[3] if len(sys.argv) > 3 else None
-        run_pipeline(data_file, brand, output_dir)
+
+        # Detect platform and route
+        platform = detect_platform_from_file(data_file)
+        if platform == 'video_number':
+            print('检测到视频号数据，使用视频号分析Pipeline')
+            run_video_number_pipeline(data_file, brand, output_dir)
+        else:
+            run_pipeline(data_file, brand, output_dir)
 
 
 if __name__ == '__main__':

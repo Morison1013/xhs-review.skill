@@ -35,114 +35,19 @@ def parse_num_series(s):
     return s.apply(convert)
 
 def detect_columns(col_names):
-    """通过关键词匹配识别各指标对应的列名"""
-    col_map = {}
-    keyword_map = {
-        'col_date': ['日期', '数据日期'],
-        'col_blogger_name': ['博主昵称', '达人昵称'],
-        'col_blogger_home': ['博主主页', '达人主页'],
-        'col_fans': ['粉丝量', '粉丝数'],
-        'col_health': ['健康等级', '账号状态'],
-        'col_note_title': ['笔记标题', '内容标题'],
-        'col_note_link': ['笔记链接'],
-        'col_note_type': ['笔记类型', '内容类型'],
-        'col_publish_date': ['发布日期', '发布时间'],
-        'col_source': ['笔记来源', '来源'],
-        'col_note_id': ['笔记id', '笔记ID'],
-        'col_content_tag': ['内容标签'],
-        'col_order_id': ['订单id'],
-        'col_coop_name': ['合作名称', '项目名称'],
-        'col_brand': ['报备品牌', '品牌'],
-        'col_blogger_price': ['博主报价', '达人报价'],
-        'col_service_fee': ['服务费'],
-        'col_spu': ['spu名称', 'SPU', '产品名称'],
-        'col_exposure': ['曝光量', '曝光'],
-        'col_reads': ['阅读量', '阅读数'],
-        'col_read_uv': ['阅读UV'],
-        'col_play_5s': ['5s播放率', '5s完播率'],
-        'col_read_3s': ['3s阅读率', '3s完播率'],
-        'col_video_duration': ['视频总时长'],
-        'col_avg_duration': ['平均浏览时长'],
-        'col_video_complete': ['视频完播率'],
-        'col_interaction': ['互动量', '互动数'],
-        'col_interaction_rate': ['互动率'],
-        'col_likes': ['点赞量', '点赞数'],
-        'col_favorites': ['收藏量', '收藏数'],
-        'col_comments': ['评论量', '评论数'],
-        'col_shares': ['分享量', '分享数', '转发'],
-        'col_follows': ['关注量', '关注数'],
-        'col_nat_exposure': ['自然曝光'],
-        'col_nat_reads': ['自然阅读'],
-        'col_promo_exposure': ['推广曝光', '付费曝光'],
-        'col_promo_reads': ['推广阅读', '付费阅读'],
-        'col_heat_exposure': ['加热曝光'],
-        'col_heat_reads': ['加热阅读'],
-        'col_total_cost': ['总金额', '总费用', '总消耗'],
-        'col_pgy_cost': ['蒲公英金额', '蒲公英费用'],
-        'col_ad_cost': ['广告金额', '广告费用'],
-        'col_female_pct': ['女', '女性'],
-        'col_male_pct': ['男', '男性'],
-        'col_age_18_24': ['18~24', '18-24'],
-        'col_age_25_34': ['25~34', '25-34'],
-        'col_active_uv_30d': ['站外活跃行为uv'],
-        'col_new_visitor_uv_30d': ['新访客UV'],
-        'col_cart_uv_30d': ['加购UV'],
-        'col_deal_uv_30d': ['成交UV'],
-        'col_purchase_rate_30d': ['购买率'],
-        'col_cart_rate_30d': ['加购率'],
-        'col_search_uv_30d': ['搜索进店UV'],
-        'col_follow_shop_uv_30d': ['关注店铺UV'],
-        'col_fav_product_uv_30d': ['收藏商品UV'],
-        # Traffic source columns (by name)
-        'col_exp_discover': ['发现页'],  # First match after exposure
-        'col_read_discover': ['发现页'], # Second match (reading)
-        'col_exp_search': ['搜索页'],
-        'col_read_search': ['搜索页'],
-        'col_exp_profile': ['个人页'],
-        'col_read_profile': ['个人页'],
-        'col_exp_follow': ['关注页'],
-        'col_read_follow': ['关注页'],
-        'col_exp_nearby': ['附近页'],
-        'col_read_nearby': ['附近页'],
-        'col_exp_other': ['其他'],
-        'col_read_other': ['其他'],
-        # Component columns
-        'col_comp_text_exp': ['正文组件曝光'],
-        'col_comp_text_click': ['正文组件点击'],
-        'col_comp_bottom_exp': ['底栏组件曝光', '笔记底栏组件曝光'],
-        'col_comp_bottom_click': ['底栏组件点击', '笔记底栏组件点击'],
-        'col_comp_interact_exp': ['互动组件曝光'],
-        'col_comp_interact_click': ['互动组件参与'],
-        'col_comp_comment_exp': ['评论区组件曝光'],
-        'col_comp_comment_click': ['评论区组件点击'],
-    }
-
-    used_cols = set()
-    for metric, keywords in keyword_map.items():
-        if metric in col_map:
-            continue
-        # Try to find by exact or partial match
-        for i, col_name in enumerate(col_names):
-            if i in used_cols:
-                continue
-            col_str = str(col_name) if col_name else ''
-            for kw in keywords:
-                if kw in col_str:
-                    col_map[metric] = i
-                    used_cols.add(i)
-                    break
-            if metric in col_map:
-                break
-
-    return col_map
+    """通过 column_matcher 模块识别各指标对应的列名"""
+    from column_matcher import detect_all_columns
+    return detect_all_columns(col_names, platform='xhs')
 
 def analyze(data_path, output_path):
     """主分析函数"""
     print(f"读取Excel: {data_path}")
 
-    # Read Excel with pandas - much faster than openpyxl iteration
-    # Skip first 2 rows (header is on row 3, 0-indexed row 2)
-    df = pd.read_excel(data_path, header=2)
+    from column_matcher import detect_header_row
+    header_row = detect_header_row(data_path)
+    print(f"检测到 header 行: {header_row}")
+
+    df = pd.read_excel(data_path, header=header_row - 1)
     print(f"数据维度: {df.shape[0]} 行 × {df.shape[1]} 列")
 
     col_names = list(df.columns)
